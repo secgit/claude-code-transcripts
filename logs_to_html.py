@@ -343,6 +343,8 @@ h1 { font-size: 1.5rem; margin-bottom: 24px; padding-bottom: 8px; border-bottom:
 .message.assistant { background: var(--card-bg); border-left: 4px solid var(--assistant-border); }
 .message.tool-reply { background: #fff8e1; border-left: 4px solid #ff9800; }
 .tool-reply .role-label { color: #e65100; }
+.tool-reply .tool-result { background: transparent; padding: 0; margin: 0; }
+.tool-reply .tool-result .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #fff8e1); }
 .message-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(0,0,0,0.03); font-size: 0.85rem; }
 .role-label { font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .user .role-label { color: var(--user-border); }
