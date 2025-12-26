@@ -31,24 +31,24 @@
 <details>
 <summary>{{ file_path }}</summary>
 
-```
+{{ content | fence_for }}
 {{ content }}
-```
+{{ content | fence_for }}
 
 </details>
 {%- endmacro %}
 
 {#- Render an Edit tool call -#}
 {% macro edit_tool(file_path, old_string, new_string, replace_all) -%}
+{%- set diff_content = '- ' ~ (old_string | replace('\n', '\n- ')) ~ '\n+ ' ~ (new_string | replace('\n', '\n+ ')) -%}
 **Edit** `{{ filename(file_path) }}`{% if replace_all %} *(replace all)*{% endif %}
 
 <details>
 <summary>{{ file_path }}</summary>
 
-```diff
-- {{ old_string | replace('\n', '\n- ') }}
-+ {{ new_string | replace('\n', '\n+ ') }}
-```
+{{ diff_content | fence_for }}diff
+{{ diff_content }}
+{{ diff_content | fence_for }}
 
 </details>
 {%- endmacro %}
@@ -68,18 +68,18 @@
 {% else -%}
 **Bash**
 {% endif %}
-```bash
+{{ command | fence_for }}bash
 {{ command }}
-```
+{{ command | fence_for }}
 {%- endmacro %}
 
 {#- Render a generic tool call -#}
 {% macro tool_use(tool_name, description, input_json) -%}
 **{{ tool_name }}**{% if description %}: {{ description }}{% endif %}
 
-```json
+{{ input_json | fence_for }}json
 {{ input_json }}
-```
+{{ input_json | fence_for }}
 {%- endmacro %}
 
 {#- Render a tool result -#}
@@ -87,9 +87,9 @@
 {% if is_error -%}
 > ⚠️ **Error**
 {% endif -%}
-```
+{{ content | fence_for }}
 {{ content }}
-```
+{{ content | fence_for }}
 {%- endmacro %}
 
 {#- Render a commit -#}

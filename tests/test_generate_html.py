@@ -1682,3 +1682,36 @@ class TestCopyOption:
         assert result.exit_code == 0
         # Browser should NOT have been opened since --copy suppresses auto-open
         assert len(browser_opened) == 0
+
+
+class TestFenceFor:
+    """Tests for the fence_for filter used in markdown templates."""
+
+    def test_fence_for_returns_triple_backticks_for_simple_content(self):
+        """Test that simple content gets triple backticks."""
+        from claude_code_transcripts import _fence_for
+
+        assert _fence_for("simple content") == "```"
+        assert _fence_for("def foo():\n    pass") == "```"
+
+    def test_fence_for_returns_more_backticks_when_content_has_triple(self):
+        """Test that content with triple backticks gets 4 backticks."""
+        from claude_code_transcripts import _fence_for
+
+        content_with_triple = "Here is code:\n```python\nprint('hi')\n```"
+        assert _fence_for(content_with_triple) == "````"
+
+    def test_fence_for_handles_multiple_backtick_runs(self):
+        """Test that the longest run determines the fence."""
+        from claude_code_transcripts import _fence_for
+
+        # Has both ``` and ```` so needs 5
+        content = "```\ncode\n```\n\n````\nmore\n````"
+        assert _fence_for(content) == "`````"
+
+    def test_fence_for_handles_empty_content(self):
+        """Test that empty content gets triple backticks."""
+        from claude_code_transcripts import _fence_for
+
+        assert _fence_for("") == "```"
+        assert _fence_for(None) == "```"

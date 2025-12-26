@@ -31,6 +31,22 @@ _jinja_env_md = Environment(
     autoescape=False,
 )
 
+
+def _fence_for(content):
+    """Return a fence string with more backticks than any consecutive run in content."""
+    max_run = 0
+    current = 0
+    for c in str(content):
+        if c == "`":
+            current += 1
+            max_run = max(max_run, current)
+        else:
+            current = 0
+    return "`" * max(3, max_run + 1)
+
+
+_jinja_env_md.filters["fence_for"] = _fence_for
+
 # Load macros template and expose macros
 _macros_template = _jinja_env.get_template("macros.html")
 _macros = _macros_template.module
