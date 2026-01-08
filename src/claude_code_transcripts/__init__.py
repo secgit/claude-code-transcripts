@@ -1090,27 +1090,75 @@ document.querySelectorAll('.truncatable').forEach(function(wrapper) {
 });
 """
 
-# JavaScript to fix relative URLs when served via gistpreview.github.io
+# JavaScript to fix relative URLs when served via gisthost.github.io or gistpreview.github.io
+# Fixes issue #26: Pagination links broken on gisthost.github.io
 GIST_PREVIEW_JS = r"""
 (function() {
-    if (window.location.hostname !== 'gistpreview.github.io') return;
-    // URL format: https://gistpreview.github.io/?GIST_ID/filename.html
+    var hostname = window.location.hostname;
+    if (hostname !== 'gisthost.github.io' && hostname !== 'gistpreview.github.io') return;
+    // URL format: https://gisthost.github.io/?GIST_ID/filename.html
     var match = window.location.search.match(/^\?([^/]+)/);
     if (!match) return;
     var gistId = match[1];
-    document.querySelectorAll('a[href]').forEach(function(link) {
-        var href = link.getAttribute('href');
-        // Skip external links and anchors
-        if (href.startsWith('http') || href.startsWith('#') || href.startsWith('//')) return;
-        // Handle anchor in relative URL (e.g., page-001.html#msg-123)
-        var parts = href.split('#');
-        var filename = parts[0];
-        var anchor = parts.length > 1 ? '#' + parts[1] : '';
-        link.setAttribute('href', '?' + gistId + '/' + filename + anchor);
+
+    function rewriteLinks(root) {
+        (root || document).querySelectorAll('a[href]').forEach(function(link) {
+            var href = link.getAttribute('href');
+            // Skip already-rewritten links (issue #26 fix)
+            if (href.startsWith('?')) return;
+            // Skip external links and anchors
+            if (href.startsWith('http') || href.startsWith('#') || href.startsWith('//')) return;
+            // Handle anchor in relative URL (e.g., page-001.html#msg-123)
+            var parts = href.split('#');
+            var filename = parts[0];
+            var anchor = parts.length > 1 ? '#' + parts[1] : '';
+            link.setAttribute('href', '?' + gistId + '/' + filename + anchor);
+        });
+    }
+
+    // Run immediately
+    rewriteLinks();
+
+    // Also run on DOMContentLoaded in case DOM isn't ready yet
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { rewriteLinks(); });
+    }
+
+    // Use MutationObserver to catch dynamically added content
+    // gistpreview.github.io may add content after initial load
+    var observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            mutation.addedNodes.forEach(function(node) {
+                if (node.nodeType === 1) { // Element node
+                    rewriteLinks(node);
+                    // Also check if the node itself is a link
+                    if (node.tagName === 'A' && node.getAttribute('href')) {
+                        var href = node.getAttribute('href');
+                        if (!href.startsWith('?') && !href.startsWith('http') &&
+                            !href.startsWith('#') && !href.startsWith('//')) {
+                            var parts = href.split('#');
+                            var filename = parts[0];
+                            var anchor = parts.length > 1 ? '#' + parts[1] : '';
+                            node.setAttribute('href', '?' + gistId + '/' + filename + anchor);
+                        }
+                    }
+                }
+            });
+        });
     });
 
+    // Start observing once body exists
+    function startObserving() {
+        if (document.body) {
+            observer.observe(document.body, { childList: true, subtree: true });
+        } else {
+            setTimeout(startObserving, 10);
+        }
+    }
+    startObserving();
+
     // Handle fragment navigation after dynamic content loads
-    // gistpreview.github.io loads content dynamically, so the browser's
+    // gisthost.github.io/gistpreview.github.io loads content dynamically, so the browser's
     // native fragment navigation fails because the element doesn't exist yet
     function scrollToFragment() {
         var hash = window.location.hash;
@@ -1127,7 +1175,7 @@ GIST_PREVIEW_JS = r"""
     // Try immediately in case content is already loaded
     if (!scrollToFragment()) {
         // Retry with increasing delays to handle dynamic content loading
-        var delays = [100, 300, 500, 1000];
+        var delays = [100, 300, 500, 1000, 2000];
         delays.forEach(function(delay) {
             setTimeout(scrollToFragment, delay);
         });
@@ -1398,7 +1446,7 @@ def cli():
 @click.option(
     "--gist",
     is_flag=True,
-    help="Upload to GitHub Gist and output a gistpreview.github.io URL.",
+    help="Upload to GitHub Gist and output a gisthost.github.io URL.",
 )
 @click.option(
     "--json",
@@ -1486,7 +1534,7 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
         inject_gist_preview_js(output)
         click.echo("Creating GitHub gist...")
         gist_id, gist_url = create_gist(output)
-        preview_url = f"https://gistpreview.github.io/?{gist_id}/index.html"
+        preview_url = f"https://gisthost.github.io/?{gist_id}/index.html"
         click.echo(f"Gist: {gist_url}")
         click.echo(f"Preview: {preview_url}")
 
@@ -1495,8 +1543,47 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
         webbrowser.open(index_url)
 
 
+def is_url(path):
+    """Check if a path is a URL (starts with http:// or https://)."""
+    return path.startswith("http://") or path.startswith("https://")
+
+
+def fetch_url_to_tempfile(url):
+    """Fetch a URL and save to a temporary file.
+
+    Returns the Path to the temporary file.
+    Raises click.ClickException on network errors.
+    """
+    try:
+        response = httpx.get(url, timeout=60.0, follow_redirects=True)
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        raise click.ClickException(f"Failed to fetch URL: {e}")
+    except httpx.HTTPStatusError as e:
+        raise click.ClickException(
+            f"Failed to fetch URL: {e.response.status_code} {e.response.reason_phrase}"
+        )
+
+    # Determine file extension from URL
+    url_path = url.split("?")[0]  # Remove query params
+    if url_path.endswith(".jsonl"):
+        suffix = ".jsonl"
+    elif url_path.endswith(".json"):
+        suffix = ".json"
+    else:
+        suffix = ".jsonl"  # Default to JSONL
+
+    # Extract a name from the URL for the temp file
+    url_name = Path(url_path).stem or "session"
+
+    temp_dir = Path(tempfile.gettempdir())
+    temp_file = temp_dir / f"claude-url-{url_name}{suffix}"
+    temp_file.write_text(response.text, encoding="utf-8")
+    return temp_file
+
+
 @cli.command("json")
-@click.argument("json_file", type=click.Path(exists=True))
+@click.argument("json_file", type=click.Path())
 @click.option(
     "-o",
     "--output",
@@ -1516,7 +1603,7 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
 @click.option(
     "--gist",
     is_flag=True,
-    help="Upload to GitHub Gist and output a gistpreview.github.io URL.",
+    help="Upload to GitHub Gist and output a gisthost.github.io URL.",
 )
 @click.option(
     "--json",
@@ -1531,19 +1618,36 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
     help="Open the generated index.html in your default browser (default if no -o specified).",
 )
 def json_cmd(json_file, output, output_auto, repo, gist, include_json, open_browser):
-    """Convert a Claude Code session JSON/JSONL file to HTML."""
+    """Convert a Claude Code session JSON/JSONL file or URL to HTML."""
+    # Handle URL input
+    if is_url(json_file):
+        click.echo(f"Fetching {json_file}...")
+        temp_file = fetch_url_to_tempfile(json_file)
+        json_file_path = temp_file
+        # Use URL path for naming
+        url_name = Path(json_file.split("?")[0]).stem or "session"
+    else:
+        # Validate that local file exists
+        json_file_path = Path(json_file)
+        if not json_file_path.exists():
+            raise click.ClickException(f"File not found: {json_file}")
+        url_name = None
+
     # Determine output directory and whether to open browser
     # If no -o specified, use temp dir and open browser by default
     auto_open = output is None and not gist and not output_auto
     if output_auto:
         # Use -o as parent dir (or current dir), with auto-named subdirectory
         parent_dir = Path(output) if output else Path(".")
-        output = parent_dir / Path(json_file).stem
+        output = parent_dir / (url_name or json_file_path.stem)
     elif output is None:
-        output = Path(tempfile.gettempdir()) / f"claude-session-{Path(json_file).stem}"
+        output = (
+            Path(tempfile.gettempdir())
+            / f"claude-session-{url_name or json_file_path.stem}"
+        )
 
     output = Path(output)
-    generate_html(json_file, output, github_repo=repo)
+    generate_html(json_file_path, output, github_repo=repo)
 
     # Show output directory
     click.echo(f"Output: {output.resolve()}")
@@ -1551,9 +1655,8 @@ def json_cmd(json_file, output, output_auto, repo, gist, include_json, open_brow
     # Copy JSON file to output directory if requested
     if include_json:
         output.mkdir(exist_ok=True)
-        json_source = Path(json_file)
-        json_dest = output / json_source.name
-        shutil.copy(json_file, json_dest)
+        json_dest = output / json_file_path.name
+        shutil.copy(json_file_path, json_dest)
         json_size_kb = json_dest.stat().st_size / 1024
         click.echo(f"JSON: {json_dest} ({json_size_kb:.1f} KB)")
 
@@ -1562,7 +1665,7 @@ def json_cmd(json_file, output, output_auto, repo, gist, include_json, open_brow
         inject_gist_preview_js(output)
         click.echo("Creating GitHub gist...")
         gist_id, gist_url = create_gist(output)
-        preview_url = f"https://gistpreview.github.io/?{gist_id}/index.html"
+        preview_url = f"https://gisthost.github.io/?{gist_id}/index.html"
         click.echo(f"Gist: {gist_url}")
         click.echo(f"Preview: {preview_url}")
 
@@ -1863,7 +1966,7 @@ def generate_html_from_session_data(session_data, output_dir, github_repo=None):
 @click.option(
     "--gist",
     is_flag=True,
-    help="Upload to GitHub Gist and output a gistpreview.github.io URL.",
+    help="Upload to GitHub Gist and output a gisthost.github.io URL.",
 )
 @click.option(
     "--json",
@@ -1977,7 +2080,7 @@ def web_cmd(
         inject_gist_preview_js(output)
         click.echo("Creating GitHub gist...")
         gist_id, gist_url = create_gist(output)
-        preview_url = f"https://gistpreview.github.io/?{gist_id}/index.html"
+        preview_url = f"https://gisthost.github.io/?{gist_id}/index.html"
         click.echo(f"Gist: {gist_url}")
         click.echo(f"Preview: {preview_url}")
 
